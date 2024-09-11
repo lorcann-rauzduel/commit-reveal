@@ -1,18 +1,22 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.22;
+pragma solidity 0.8.27;
+
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 contract VotingSystem is Ownable {
-    mapping(address => bytes32) private voteHashes;
-    mapping(bytes32 => uint256) public voteCounts;
     uint256 private highestVotes;
     string public winner;
-    mapping(string => bool) public validOptions; 
+    uint256 public immutable votingStart;
+    uint256 public immutable votingEnd;
+    
+    mapping(address => Vote) private votes;
+    mapping(bytes32 => uint256) public voteCounts;
+    mapping(string => bool) public validOptions;
 
-    uint256 public votingStart;
-    uint256 public votingEnd;
-
-    bytes32[] public options;
+    struct Vote {
+        bytes32 hash;
+        bool revealed;
+    }
 
     error InvalidVote();
     error VoteAlreadyCommitted();
@@ -30,26 +34,28 @@ contract VotingSystem is Ownable {
         votingEnd = votingStart + (_votingPeriodInMinutes * 1 minutes);
     }
 
-    function commit(bytes32 _hash) public {
-        if (block.timestamp < votingStart) revert VotingNotStarted();
-        if (block.timestamp > votingEnd) revert VotingEnded();
-        if (voteHashes[msg.sender] != 0) revert VoteAlreadyCommitted();
+    function commit(bytes32 _hash) external {
+        require(block.timestamp > votingStart,  VotingNotStarted());
+        require(block.timestamp < votingEnd, VotingEnded());
+        require(votes[msg.sender].hash == 0, VoteAlreadyCommitted());
 
-        voteHashes[msg.sender] = _hash;
-
+        votes[msg.sender].hash = _hash;
         emit VoteCommitted(msg.sender, _hash);
     }
 
-    function reveal(string memory _vote, string calldata _salt) public {
-        if (block.timestamp < votingEnd) revert VotingNotEnded();
-        if (!isOptionValid(_vote)) revert InvalidVote();
-        bytes32 voteHash = keccak256(abi.encodePacked(_vote, _salt));
-        if (voteHashes[msg.sender] != voteHash) revert InvalidVote();
-        voteHashes[msg.sender] = 0;
+    function reveal(string calldata _vote, string calldata salt) external {
 
-        voteCounts[voteHash]++;
-        if (voteCounts[voteHash] > highestVotes) {
-            highestVotes = voteCounts[voteHash];
+        require(block.timestamp > votingEnd, VotingNotEnded());
+        require(validOptions[_vote], InvalidVote());
+
+        bytes32 voteHash = keccak256(abi.encodePacked(_vote, salt));
+        require(votes[msg.sender].hash == voteHash && !votes[msg.sender].revealed, InvalidVote());
+
+        votes[msg.sender].revealed = true;
+        uint256 count = ++voteCounts[voteHash];
+
+        if (count > highestVotes) {
+            highestVotes = count;
             winner = _vote;
             emit WinnerUpdated(voteHash);
         }
@@ -57,11 +63,11 @@ contract VotingSystem is Ownable {
         emit VoteRevealed(msg.sender, voteHash);
     }
 
-    function addOption(string memory option) public onlyOwner {
+    function addOption(string calldata option) external onlyOwner {
         validOptions[option] = true;
     }
 
-    function isOptionValid(string memory option) public view returns (bool) {
+    function isOptionValid(string calldata option) external view returns (bool) {
         return validOptions[option];
     }
 }

@@ -31,8 +31,12 @@ describe('VotingSystem', function () {
 
 			const currentTime = Math.floor(Date.now() / 1000);
 			const votingStart = await votingSystem.votingStart();
+			const votingEnd = await votingSystem.votingEnd();
 
 			expect(Number(votingStart)).to.be.closeTo(currentTime, 60); // 60 seconds tolerance
+			expect(Number(votingEnd)).to.equal(
+				Number(votingStart) + votingPeriodInMinutes * 60
+			);
 		});
 	});
 
@@ -48,7 +52,7 @@ describe('VotingSystem', function () {
 				.withArgs(owner.address, vote);
 		});
 
-		it('Should allow a multiple users to commit a vote and reveal it', async function () {
+		it('Should allow multiple users to commit a vote and reveal it', async function () {
 			const { votingSystem, owner, voter1, voter2, voter3 } = await loadFixture(
 				deployVotingSystemFixture
 			);
@@ -99,7 +103,7 @@ describe('VotingSystem', function () {
 			expect(await votingSystem.winner()).to.equal(vote1);
 		});
 
-		it('Should revert if a user tries to reveal a vote before the voting period', async function () {
+		it('Should revert if a user tries to reveal a vote before the voting period ends', async function () {
 			const { votingSystem, owner } = await loadFixture(
 				deployVotingSystemFixture
 			);
@@ -109,6 +113,45 @@ describe('VotingSystem', function () {
 			await expect(
 				votingSystem.reveal('candidate1', 'salt1')
 			).to.be.revertedWithCustomError(votingSystem, 'VotingNotEnded');
+		});
+
+		it('Should revert if a user tries to commit a vote after the voting period', async function () {
+			const { votingSystem, votingPeriodInMinutes } = await loadFixture(
+				deployVotingSystemFixture
+			);
+			await time.increase(time.duration.minutes(votingPeriodInMinutes + 1));
+			const vote = hashCombined('candidate1', 'salt1');
+			await expect(votingSystem.commit(vote)).to.be.revertedWithCustomError(
+				votingSystem,
+				'VotingEnded'
+			);
+		});
+
+		it('Should revert if a user tries to reveal an invalid vote', async function () {
+			const { votingSystem, votingPeriodInMinutes } = await loadFixture(
+				deployVotingSystemFixture
+			);
+			const vote = hashCombined('candidate1', 'salt1');
+			await votingSystem.addOption('candidate1');
+			await votingSystem.commit(vote);
+			await time.increase(time.duration.minutes(votingPeriodInMinutes + 1));
+			await expect(
+				votingSystem.reveal('candidate1', 'wrongsalt')
+			).to.be.revertedWithCustomError(votingSystem, 'InvalidVote');
+		});
+
+		it('Should revert if a user tries to reveal a vote twice', async function () {
+			const { votingSystem, votingPeriodInMinutes } = await loadFixture(
+				deployVotingSystemFixture
+			);
+			const vote = hashCombined('candidate1', 'salt1');
+			await votingSystem.addOption('candidate1');
+			await votingSystem.commit(vote);
+			await time.increase(time.duration.minutes(votingPeriodInMinutes + 1));
+			await votingSystem.reveal('candidate1', 'salt1');
+			await expect(
+				votingSystem.reveal('candidate1', 'salt1')
+			).to.be.revertedWithCustomError(votingSystem, 'InvalidVote');
 		});
 	});
 });
